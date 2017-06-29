@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Controller</title>
+    <style>
+        button{
+            width: 20%;
+            height: 100vh;
+        }
+    </style>
+</head>
+<body>
+<script src="/socket.io/socket.io.js"></script>
+<script>
+    window.socket = io();
+    window.socket.on('message', function (data) {
+        console.log(data);
+        console.log(Date.now() - window.current_time);
+    })
+    function speedTest() {
+        window.current_time = Date.now();
+        socket.emit('emit', 'ahaha');
+    }
+    function control(event, message) {
+        socket.emit('control', {event, message});
+    }
+
+    function spam_move(event, message) {
+        setInterval(function () {
+            control(event, message);
+        }, 100);
+    }
+
+    function move(type) {
+        control('move', {type: type, value: 0.5})
+    }
+</script>
+<button onclick="move('move-left')">Left</button>
+<button onclick="move('move-right')">Right</button>
+<button onclick="move('move-forward')">Forward</button>
+<button onclick="move('move-backward')">Backward</button>
+</body>
+</html>
+
+

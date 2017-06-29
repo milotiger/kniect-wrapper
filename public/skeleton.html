@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <title>Control Client</title>
+    <link rel="stylesheet" href="">
+</head>
+<body>
+<canvas id="bodyCanvas" width="512" height="424"></canvas>
+<br>
+<button onclick="setStandardPosition()">Set Standard Position</button>
+<p id="status-1"></p>
+<p id="status-2"></p>
+<p id="status-3"></p>
+<p id="status-4"></p>
+<script src="/socket.io/socket.io.js"></script>
+<script>
+    var socket = io.connect('/');
+    var canvas = document.getElementById('bodyCanvas');
+    var ctx = canvas.getContext('2d');
+    var colors = ['#ff0000', '#00ff00', '#0000ff', '#ffff00', '#00ffff', '#ff00ff'];
+
+    var Joints = {
+        'LEFT_HAND': 7,
+        'RIGHT_HAND': 11,
+        'HEAD': 11//3
+    }
+
+    var StandardPosition = {
+        Head: {
+            X: 0,
+            Y: 0,
+            Z: 0,
+        },
+        RightHand: {
+            X: 0,
+            Y: 0
+        },
+        LeftHand: {
+            X: 0,
+            Y: 0
+        },
+        isSet: false
+    }
+    var OffsetValues = {};
+    var CurrentJointsState = {};
+
+    // handstate circle size
+    var HANDSIZE = 20;
+
+    // closed hand state color
+    var HANDCLOSEDCOLOR = "red";
+
+    // open hand state color
+    var HANDOPENCOLOR = "green";
+
+    // lasso hand state color
+    var HANDLASSOCOLOR = "blue";
+
+    function updateHandState(handState, jointPoint) {
+        switch (handState) {
+            case 3:
+                drawHand(jointPoint, HANDCLOSEDCOLOR);
+                break;
+
+            case 2:
+                drawHand(jointPoint, HANDOPENCOLOR);
+                break;
+
+            case 4:
+                drawHand(jointPoint, HANDLASSOCOLOR);
+                break;
+        }
+    }
+
+    function drawHand(jointPoint, handColor) {
+        // draw semi transparent hand cicles
+        ctx.globalAlpha = 0.75;
+        ctx.beginPath();
+        ctx.fillStyle = handColor;
+        ctx.arc(jointPoint.depthX * 512, jointPoint.depthY * 424, HANDSIZE, 0, Math.PI * 2, true);
+        ctx.fill();
+        ctx.closePath();
+        ctx.globalAlpha = 1;
+    }
+
+    socket.on('bodyFrame', function(bodyFrame){
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        var index = 0;
+        bodyFrame.bodies.forEach(function(body){
+            if(body.tracked) {
+                //detectGesture(body.joints, body.rightHandState, body.leftHandState);
+                for(var jointType in body.joints) {
+                    var joint = body.joints[jointType];
+                    ctx.fillStyle = colors[index];
+                    ctx.fillRect(joint.depthX * 512, joint.depthY * 424, 10, 10);
+                }
+                //draw hand states
+                updateHandState(body.leftHandState, body.joints[Joints.LEFT_HAND]);
+                updateHandState(body.rightHandState, body.joints[Joints.RIGHT_HAND]);
+                index++;
+            }
+        });
+    });
+
+    var count = {
+        clicks: 0,
+        returns: 0
+    }
+    socket.on('gesture-detected', function (result) {
+        debug(3, 'gesture-detected', JSON.stringify(result));
+        for (var i in result) {
+            if (result[i].type == 'click'){
+                count.clicks ++;
+            }
+            if (result[i].type == 'return'){
+                count.returns ++;
+            }
+        }
+        debug(4, 'count: ', JSON.stringify(count));
+    })
+
+    var isClick = false;
+    var lastClick = null;
+    var lastState = null;
+    var lastRightHandX = 0;
+    var lastReturn = null;
+
+    function detectGesture(joins, rightHandState, leftHandState) {
+        CurrentJointsState = joins;
+
+        calculateOffset();
+        debug(1, 'offset', simplifyOffset(OffsetValues));
+        var offsetX = Math.abs(lastRightHandX - CurrentJointsState[Joints.RIGHT_HAND].depthX)
+        debug(4, 'offset Right X', offsetX);
+        if (OffsetValues.Head) {
+            if (Math.abs(OffsetValues.Head.X) > 0.05){
+                debug(2, 'Move Right: ', OffsetValues.Head.X);
+            } else {
+                debug(2, 'Move Right: ', 'None');
+            }
+            if (Math.abs(OffsetValues.Head.Z) > 0.025){
+                debug(3, 'Move Forward: ', -OffsetValues.Head.Z);
+            } else {
+                debug(3, 'Move Forward: ', 'None');
+            }
+        }
+        if (lastState == 3 && rightHandState == 2 && Date.now() - lastClick >= 500) {
+            isClick = true;
+            lastClick = Date.now();
+            console.log('clicked!');
+        }
+        if (offsetX >= 0.02 && Date.now() - lastReturn >= 1000) {
+            console.log('returned!');
+            lastReturn = Date.now();
+        }
+
+        lastState = rightHandState;
+        lastRightHandX = CurrentJointsState[Joints.RIGHT_HAND].depthX;
+    }
+
+    function debug(line_index, title, message) {
+        var id = 'status-' + line_index;
+        document.getElementById(id).innerHTML = title + ": " + message;
+    }
+    
+    function simplifyJoint(joint) {
+        var decimal = 2;
+        var result = {};
+        var props = ['depthX', 'depthY', 'cameraX', 'cameraY', 'cameraZ', 'orientationX', 'orientationY', 'orientationZ', 'orientationW'];
+        for (var i in props) {
+            result[props[i]] = joint[props[i]].toFixed(decimal);
+        }
+//        return JSON.stringify(joint);
+        return JSON.stringify(result);
+    }
+
+    function setStandardPosition() {
+        socket.emit('set-standard-position');
+//        var joint = CurrentJointsState;
+//        var head = joint[Joints.HEAD];
+//        StandardPosition.Head = {X: head.cameraX, Y: head.cameraY, Z: head.cameraZ};
+//        var left_hand = joint[Joints.LEFT_HAND];
+//        StandardPosition.LeftHand = {X: left_hand.depthX, Y: left_hand.depthY};
+//        var right_hand = joint[Joints.RIGHT_HAND];
+//        StandardPosition.RightHand = {X: right_hand.depthX, Y: right_hand.depthY};
+//        StandardPosition.isSet = true;
+    }
+
+    function calculateOffset() {
+        if (StandardPosition.isSet == false){
+            return {};
+        }
+        var joint = CurrentJointsState;
+        var head = joint[Joints.HEAD];
+        var left_hand = joint[Joints.LEFT_HAND];
+        var right_hand = joint[Joints.RIGHT_HAND];
+
+        var offset = {
+            Head: {
+                X: head.cameraX - StandardPosition.Head.X,
+                Y: head.cameraY - StandardPosition.Head.Y,
+                Z: head.cameraZ - StandardPosition.Head.Z
+            },
+            LeftHand: {
+                X: left_hand.depthX - StandardPosition.LeftHand.X,
+                Y: left_hand.depthY - StandardPosition.LeftHand.Y,
+            },
+            RightHand: {
+                X: right_hand.depthX - StandardPosition.RightHand.X,
+                Y: right_hand.depthY - StandardPosition.RightHand.Y,
+            }
+        }
+        OffsetValues = offset;
+    }
+
+    function simplifyOffset() {
+        if (!OffsetValues.Head){
+            return {};
+        }
+        var result = {
+            Head: {
+                X: OffsetValues.Head.X.toFixed(2),
+                Y: OffsetValues.Head.Y.toFixed(2),
+                Z: OffsetValues.Head.Z.toFixed(2),
+            },
+            LeftHand: {
+                X: OffsetValues.LeftHand.X.toFixed(2),
+                Y: OffsetValues.LeftHand.Y.toFixed(2),
+            },
+            RightHand: {
+                X: OffsetValues.RightHand.X.toFixed(2),
+                Y: OffsetValues.RightHand.Y.toFixed(2),
+            }
+        }
+        return JSON.stringify(result);
+    }
+
+</script>
+</body>
+</html>
